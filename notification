@@ -1,0 +1,68 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<TaskService>();
+builder.Services.AddSingleton<EventPublisher>();
+
+var app = builder.Build();
+
+// In-memory data store and event-driven architecture
+app.MapGet("/tasks", (TaskService taskService) => taskService.GetTasks());
+
+app.MapPost("/tasks", async (HttpContext context, TaskService taskService, EventPublisher eventPublisher) =>
+{
+    var newTask = await context.Request.ReadFromJsonAsync<TaskItem>();
+    if (newTask != null)
+    {
+        taskService.AddTask(newTask);
+        eventPublisher.PublishEvent("TaskCreated", newTask);
+        return Results.Ok(newTask);
+    }
+    return Results.BadRequest("Invalid Task Data");
+});
+
+app.MapGet("/events", async (EventPublisher eventPublisher) =>
+{
+    var events = await eventPublisher.GetEventsAsync();
+    return Results.Ok(events);
+});
+
+app.Run();
+
+// Model
+public record TaskItem(Guid Id, string Title, string Description, bool IsCompleted = false);
+
+// Task Service
+public class TaskService
+{
+    private readonly ConcurrentBag<TaskItem> _tasks = new();
+
+    public IEnumerable<TaskItem> GetTasks() => _tasks;
+
+    public void AddTask(TaskItem task) => _tasks.Add(new TaskItem(Guid.NewGuid(), task.Title, task.Description, task.IsCompleted));
+}
+
+// Event Publisher (Simple In-Memory EDA Simulation)
+public class EventPublisher
+{
+    private readonly ConcurrentQueue<string> _events = new();
+
+    public void PublishEvent(string eventType, TaskItem task)
+    {
+        _events.Enqueue($"Event: {eventType} - Task: {task.Title} at {DateTime.UtcNow}");
+    }
+
+    public Task<List<string>> GetEventsAsync()
+    {
+        var eventList = _events.ToList();
+        _events.Clear();
+        return Task.FromResult(eventList);
+    }
+}
